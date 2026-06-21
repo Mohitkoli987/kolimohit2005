@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+server.log
+trade.log
+
+# Flask
+instance/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Database
+*.db
+*.sqlite3
+
+# Cache
+.pytest_cache/
+
+# Temporary files
+*.tmp
