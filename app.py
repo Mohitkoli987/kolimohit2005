@@ -3764,8 +3764,8 @@ def delete_trades():
 
 
 # ========== TP/SL GUARDIAN CONFIG ==========
-LIVE_TP_PERCENTAGE        = 0.5
-LIVE_SL_PERCENTAGE        = 0.5
+LIVE_TP_PERCENTAGE        = 1
+LIVE_SL_PERCENTAGE        = 1
 LIQUIDATION_PROTECTION    = "Y"
 # LIQUIDATION_BUFFER        = 0.15
 LIQUIDATION_BUFFER        = 0.1
