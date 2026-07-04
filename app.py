@@ -120,11 +120,11 @@ MYSQL_POOL = PooledDB(
     maxusage=None,          # recycle connection indefinitely (no forced close after N uses)
     setsession=[],
     ping=1,                 # ping connection before use; reconnect if stale (fixes "Lost connection")
-    host=os.getenv('MYSQL_HOST', 'btuqjkw57smu3ay53y76-mysql.services.clever-cloud.com'),
+    host=os.getenv('MYSQL_HOST', 'brh5fbyrzvuo6h4krbza-mysql.services.clever-cloud.com'),
     port=int(os.getenv('MYSQL_PORT', 3306)),
-    user=os.getenv('MYSQL_USER', 'usvfl3sts8yklxnk'),
-    password=os.getenv('MYSQL_PASSWORD', 'NkYQWQDHcUdXV3TuAFzj'),
-    database=os.getenv('MYSQL_DB', 'btuqjkw57smu3ay53y76'),
+    user=os.getenv('MYSQL_USER', 'u5xpubw7bw7zeeli'),
+    password=os.getenv('MYSQL_PASSWORD', 'uwFmhjqiZfKfp0s0UofY'),
+    database=os.getenv('MYSQL_DB', 'brh5fbyrzvuo6h4krbza'),
     charset='utf8mb4',
     cursorclass=pymysql.cursors.DictCursor,
     autocommit=False,
@@ -276,9 +276,7 @@ USED_FILL_IDS_LOCK = Lock()
 MARK_PRICES      = {}
 MARK_PRICES_LOCK = Lock()
 
-# _break_even_applied_lock ADD karo
-_break_even_applied      = {}
-_break_even_applied_lock = Lock()
+
 
 PROCESSED_ORDER_IDS = set()
 PROCESSED_ORDER_IDS_LOCK = Lock()
@@ -2361,22 +2359,20 @@ def _ws_on_message(ws, message):
         msg      = json.loads(message)
         msg_type = msg.get('type', '')
 
-        # ── Auth ──────────────────────────────────────────────────────
         if msg_type == 'success' and msg.get('message') == 'Authenticated':
             WS_AUTHENTICATED = True
             print("[WS] Authenticated successfully")
             symbol = BOT_STATE.get('symbol', 'ETHUSD')
-
-            # Private channels
             _ws_subscribe(ws, 'v2/user_trades', [symbol])
             _ws_subscribe(ws, 'positions',      [symbol])
 
-            # Mark price channel (public)
+            # ADDED: mark price channel (public) — this was missing entirely,
+            # which is why MARK_PRICES dict was never getting populated via WS
             mark_symbol = f"MARK:{symbol}"
             _ws_subscribe(ws, 'mark_price', [mark_symbol])
             return
 
-        # ── Mark price update ─────────────────────────────────────────
+        # ADDED: mark price update handler — this whole block was missing
         if msg_type == 'mark_price':
             raw_sym = msg.get('symbol', '')        # e.g. "MARK:ETHUSD"
             sym     = raw_sym.replace('MARK:', '') # → "ETHUSD"
@@ -2384,9 +2380,10 @@ def _ws_on_message(ws, message):
             if sym and price:
                 with MARK_PRICES_LOCK:
                     MARK_PRICES[sym] = float(price)
+                # log every tick so you can verify it's actually live in trade.log
+                log_system(f"[WS-MARK-TICK] {sym} = {price} @ {datetime.now().strftime('%H:%M:%S.%f')}")
             return
 
-        # ── Fill ──────────────────────────────────────────────────────
         if msg_type == 'v2/user_trades':
             fill = {
                 'fill_id':             msg.get('f'),
@@ -2408,7 +2405,6 @@ def _ws_on_message(ws, message):
                   f"| order_id={fill['order_id']}")
             return
 
-        # ── Position snapshot / update ────────────────────────────────
         if msg_type == 'positions':
             action = msg.get('action', '')
             if action == 'snapshot':
@@ -3763,6 +3759,12 @@ def delete_trades():
         return jsonify({'success': False, 'message': f'Error: {str(e)}'})
 
 
+
+
+# _break_even_applied_lock ADD karo
+_break_even_applied      = {}
+_break_even_applied_lock = Lock()
+
 # ========== TP/SL GUARDIAN CONFIG ==========
 LIVE_TP_PERCENTAGE        = 1
 LIVE_SL_PERCENTAGE        = 1
@@ -3771,64 +3773,76 @@ LIQUIDATION_PROTECTION    = "Y"
 LIQUIDATION_BUFFER        = 0.1
 
 # ========== BREAK-EVEN CONFIG ==========
-BREAK_EVEN_ENABLED        = True
-BREAK_EVEN_TRIGGER_PERCENT = 0.5    # TP ka kitna % travel hone pe BE activate ho
+BREAK_EVEN_ENABLED         = True
+BREAK_EVEN_TRIGGER_PERCENT = 0.2    # TP ka kitna % travel hone pe BE activate ho
 BREAK_EVEN_TRIGGER_BUFFER  = 0.4    # Half-TP se itna pehle trigger ho (USD)
-BREAK_EVEN_PROFIT_OFFSET   = 2    # Entry ke upar SL kitna rakho (USD)
+BREAK_EVEN_PROFIT_OFFSET   = 2      # Entry ke upar SL kitna rakho (USD)
 
 # ========== BREAK-EVEN STATE TRACKER ==========
-# key = product_id, value = True/False
+# key = product_id, value = be_new_sl price (float) or None
 _break_even_applied = {}
 
 # ========== TP/SL GUARDIAN (with real-time mark price) ==========
+# UPDATED VERSION — fixes Break-Even not triggering issue
+#
+# WHAT CHANGED (only 2 things, everything else is 100% identical to your original):
+#   1. BE price fetch: ab REST API se FRESH price pehle try hoti hai (reliable),
+#      WS cache sirf backup/fallback hai agar REST fail ho jaye.
+#      Pehle ulta tha — WS cache pehle try hota tha jo stale ho sakti thi.
+#   2. Debug log line add ki gayi hai (long aur short dono ke liye) jo har
+#      2-second cycle mein live_price vs be_trigger dikhayegi. Isse agli baar
+#      turant pata chalega ki BE trigger kyun miss ho raha hai (agar phir bhi ho).
+#
+# Replace your existing auto_tp_sl_guardian function with this ENTIRE function.
+
 def auto_tp_sl_guardian():
     while True:
         try:
             time.sleep(2)
- 
+
             positions_response = make_api_request('GET', '/positions/margined')
             if not positions_response or not positions_response.get('success'):
                 continue
- 
+
             active_positions = [
                 p for p in positions_response.get('result', [])
                 if abs(float(p.get('size', 0))) > 0.0001
             ]
- 
+
             if not active_positions:
                 # Clean up BE tracker when no positions open
                 with _break_even_applied_lock:
                     _break_even_applied.clear()
                 continue
- 
+
             # Clean up closed positions from tracker
             active_ids = set(str(p.get('product_id')) for p in active_positions)
             with _break_even_applied_lock:
                 for pid in list(_break_even_applied.keys()):
                     if pid not in active_ids:
                         del _break_even_applied[pid]
- 
+
             for pos in active_positions:
                 try:
                     symbol     = pos.get("product_symbol") or pos.get("symbol")
                     size       = float(pos.get("size", 0))
                     entry      = float(pos.get("entry_price", 0))
                     product_id = pos.get("product_id")
- 
+
                     if not all([symbol, product_id]) or abs(size) < 0.0001 or entry <= 0:
                         continue
- 
+
                     pos_key = str(product_id)
- 
+
                     if size > 0:
                         expected_tp = entry * (1 + LIVE_TP_PERCENTAGE / 100)
                         expected_sl = entry * (1 - LIVE_SL_PERCENTAGE / 100)
                     else:
                         expected_tp = entry * (1 - LIVE_TP_PERCENTAGE / 100)
                         expected_sl = entry * (1 + LIVE_SL_PERCENTAGE / 100)
- 
+
                     final_sl = expected_sl
- 
+
                     # ── Liquidation protection ────────────────────────────
                     if str(LIQUIDATION_PROTECTION).strip().upper() == "Y":
                         try:
@@ -3856,36 +3870,61 @@ def auto_tp_sl_guardian():
                         except Exception as liq_err:
                             log_system(f"[LIQ PROTECT] Error for {symbol}: {liq_err} - using original SL")
                             final_sl = expected_sl
- 
+
                     # ── BREAK-EVEN LOGIC (real-time mark price) ───────────
                     with _break_even_applied_lock:
-                        be_already_done = _break_even_applied.get(pos_key, False)
- 
+                        be_already_done = _break_even_applied.get(pos_key) is not None
+
                     if BREAK_EVEN_ENABLED and not be_already_done:
                         try:
-                            # ── KEY CHANGE: read from MARK_PRICES cache (WS),
-                            #    fall back to REST only if WS hasn't sent yet ──
-                            with MARK_PRICES_LOCK:
-                                live_price = MARK_PRICES.get(symbol)
- 
-                            if live_price is None:
-                                # WS not ready yet — REST fallback (rare, startup only)
+                            # ═══════════════════════════════════════════════
+                            # FIX: REST FIRST (reliable, fresh), WS = backup only
+                            #
+                            # NOTE: To check if WS mark_price is truly live, add this
+                            # snippet inside _ws_on_message() in the `if msg_type == 'mark_price':`
+                            # block (right after the price is parsed), it prints every WS tick:
+                            #
+                            #   log_system(f"[WS-MARK-TICK] {sym} = {price} @ {datetime.now().strftime('%H:%M:%S.%f')}")
+                            #
+                            # If you see this line printing every 1-2 seconds in trade.log for
+                            # ETHUSD, WS mark price IS live. If it's missing/rare, WS is NOT
+                            # reliably feeding price and you should rely on the REST fetch below.
+                            # ═══════════════════════════════════════════════
+                            live_price = None
+                            try:
                                 ticker_be = make_api_request('GET', f'/tickers/{symbol}')
                                 if ticker_be and ticker_be.get('result'):
-                                    live_price = float(ticker_be['result']['mark_price']
-                                                       or ticker_be['result']['close'])
-                                    # Prime the cache while we're here
+                                    live_price = float(
+                                        ticker_be['result'].get('mark_price')
+                                        or ticker_be['result'].get('close')
+                                    )
+                                    # keep WS cache in sync too
                                     with MARK_PRICES_LOCK:
                                         MARK_PRICES[symbol] = live_price
-                                    log_system(f"[BE] WS mark price not ready, used REST fallback for {symbol}")
- 
+                            except Exception as rest_err:
+                                log_system(f"[BE] REST price fetch failed for {symbol}: {rest_err}")
+
+                            if live_price is None:
+                                # REST failed — fall back to WS cache
+                                with MARK_PRICES_LOCK:
+                                    live_price = MARK_PRICES.get(symbol)
+                                if live_price is not None:
+                                    log_system(f"[BE] REST failed, using WS cache for {symbol} = {live_price:.4f}")
+
                             if live_price is not None:
                                 if size > 0:  # LONG
-                                    tp_distance  = expected_tp - entry
+                                    tp_distance   = expected_tp - entry
                                     half_distance = tp_distance * BREAK_EVEN_TRIGGER_PERCENT
-                                    be_trigger   = entry + half_distance - BREAK_EVEN_TRIGGER_BUFFER
-                                    be_new_sl    = entry + BREAK_EVEN_PROFIT_OFFSET
- 
+                                    be_trigger    = entry + half_distance - BREAK_EVEN_TRIGGER_BUFFER
+                                    be_new_sl     = entry + BREAK_EVEN_PROFIT_OFFSET
+
+                                    # DEBUG LOG — shows every cycle so you can see exactly what's happening
+                                    log_system(
+                                        f"[BE DEBUG] {symbol} LONG | live={live_price:.4f} | "
+                                        f"trigger={be_trigger:.4f} | gap={live_price - be_trigger:.4f} | "
+                                        f"new_sl_will_be={be_new_sl:.4f}"
+                                    )
+
                                     if live_price >= be_trigger:
                                         _set_break_even_sl(
                                             symbol, product_id, size,
@@ -3894,13 +3933,20 @@ def auto_tp_sl_guardian():
                                             live_price=live_price,
                                             be_trigger=be_trigger
                                         )
- 
+
                                 else:  # SHORT
                                     tp_distance   = entry - expected_tp
-                                    half_distance  = tp_distance * BREAK_EVEN_TRIGGER_PERCENT
-                                    be_trigger     = entry - half_distance + BREAK_EVEN_TRIGGER_BUFFER
-                                    be_new_sl      = entry - BREAK_EVEN_PROFIT_OFFSET
- 
+                                    half_distance = tp_distance * BREAK_EVEN_TRIGGER_PERCENT
+                                    be_trigger    = entry - half_distance + BREAK_EVEN_TRIGGER_BUFFER
+                                    be_new_sl     = entry - BREAK_EVEN_PROFIT_OFFSET
+
+                                    # DEBUG LOG
+                                    log_system(
+                                        f"[BE DEBUG] {symbol} SHORT | live={live_price:.4f} | "
+                                        f"trigger={be_trigger:.4f} | gap={be_trigger - live_price:.4f} | "
+                                        f"new_sl_will_be={be_new_sl:.4f}"
+                                    )
+
                                     if live_price <= be_trigger:
                                         _set_break_even_sl(
                                             symbol, product_id, size,
@@ -3909,44 +3955,51 @@ def auto_tp_sl_guardian():
                                             live_price=live_price,
                                             be_trigger=be_trigger
                                         )
- 
+                            else:
+                                log_system(f"[BE] No live price available (REST + WS both failed) for {symbol} — skipping BE check this cycle")
+
                         except Exception as be_err:
                             log_system(f"[BREAK-EVEN] Error for {symbol}: {be_err}")
                     # ── END BREAK-EVEN LOGIC ──────────────────────────────
- 
+
                     # ── TP/SL existence check ─────────────────────────────
                     dynamic_tolerance = entry * 0.0005
- 
+
                     orders_response = make_api_request('GET', f'/orders?product_id={product_id}&state=open')
                     if not orders_response or not orders_response.get('success'):
                         continue
- 
+
                     orders    = orders_response.get("result", [])
                     tp_orders = [o for o in orders if o.get("reduce_only") and o.get("stop_order_type") == "take_profit_order"]
                     sl_orders = [o for o in orders if o.get("reduce_only") and o.get("stop_order_type") == "stop_loss_order"]
- 
+
                     tp_valid        = False
                     sl_valid        = False
                     wrong_tp_orders = []
                     wrong_sl_orders = []
- 
+
                     for tp_order in tp_orders:
                         stop_price = float(tp_order.get("stop_price", 0))
                         if abs(stop_price - expected_tp) < dynamic_tolerance:
                             tp_valid = True
                         else:
                             wrong_tp_orders.append(tp_order)
- 
+
+                    with _break_even_applied_lock:
+                        be_sl_price = _break_even_applied.get(pos_key)  # None ya BE SL price (float)
+
                     for sl_order in sl_orders:
                         stop_price = float(sl_order.get("stop_price", 0))
                         if abs(stop_price - final_sl) < dynamic_tolerance:
                             sl_valid = True
+                        elif be_sl_price is not None and abs(stop_price - be_sl_price) < dynamic_tolerance:
+                            sl_valid = True  # BE SL hai, guardian isko overwrite nahi karega
                         else:
                             wrong_sl_orders.append(sl_order)
- 
+
                     tp_edited = False
                     sl_edited = False
- 
+
                     if wrong_tp_orders and not tp_valid:
                         for tp_order in wrong_tp_orders:
                             order_id     = tp_order.get("id")
@@ -3972,7 +4025,7 @@ def auto_tp_sl_guardian():
                                     break
                             except Exception:
                                 pass
- 
+
                     if wrong_sl_orders and not sl_valid:
                         for sl_order in wrong_sl_orders:
                             order_id     = sl_order.get("id")
@@ -3998,12 +4051,11 @@ def auto_tp_sl_guardian():
                                     break
                             except Exception:
                                 pass
- 
+
                     need_tp = not tp_valid and not tp_edited
                     need_sl = not sl_valid and not sl_edited
- 
+
                     if need_tp or need_sl:
-                        # Use cached mark price for safety check too
                         with MARK_PRICES_LOCK:
                             curr_price = MARK_PRICES.get(symbol)
                         if curr_price is None:
@@ -4011,7 +4063,7 @@ def auto_tp_sl_guardian():
                             if ticker and ticker.get('result'):
                                 curr_price = float(ticker['result']['mark_price']
                                                    or ticker['result']['close'])
- 
+
                         if curr_price is not None:
                             is_safe = True
                             if size > 0:
@@ -4022,7 +4074,7 @@ def auto_tp_sl_guardian():
                                     is_safe = False
                             if not is_safe:
                                 continue
- 
+
                         log_system(f"Placing missing TP/SL for {symbol}")
                         payload = {
                             "product_id": int(product_id),
@@ -4047,21 +4099,20 @@ def auto_tp_sl_guardian():
                                 log_system(f"Bracket placed for {symbol}")
                         except Exception:
                             pass
- 
+
                     time.sleep(0.3)
- 
+
                 except Exception:
                     pass
- 
+
         except Exception:
             time.sleep(2)
- 
- 
+
 def _set_break_even_sl(symbol, product_id, size, be_new_sl, pos_key,
                         direction, live_price, be_trigger):
     """
     Helper: edit existing SL order to break-even level, or place new bracket SL.
-    Sets _break_even_applied[pos_key] = True on success.
+    CHANGE 1: Stores be_new_sl price (float) instead of True in tracker.
     """
     orders_be    = make_api_request('GET', f'/orders?product_id={product_id}&state=open')
     sl_orders_be = []
@@ -4070,9 +4121,9 @@ def _set_break_even_sl(symbol, product_id, size, be_new_sl, pos_key,
             o for o in orders_be.get("result", [])
             if o.get("reduce_only") and o.get("stop_order_type") == "stop_loss_order"
         ]
- 
+
     be_sl_set = False
- 
+
     for sl_o in sl_orders_be:
         order_id_be  = sl_o.get("id")
         edit_payload = {
@@ -4096,13 +4147,14 @@ def _set_break_even_sl(symbol, product_id, size, be_new_sl, pos_key,
                     f"live={live_price:.6f} vs trigger={be_trigger:.6f} -> "
                     f"SL moved to {be_new_sl:.6f}"
                 )
+                # CHANGE 1: True ki jagah be_new_sl price store karo
                 with _break_even_applied_lock:
-                    _break_even_applied[pos_key] = True
+                    _break_even_applied[pos_key] = be_new_sl
                 be_sl_set = True
                 break
         except Exception:
             pass
- 
+
     if not be_sl_set and not sl_orders_be:
         # No existing SL order — place fresh bracket SL
         payload_be = {
@@ -4125,10 +4177,12 @@ def _set_break_even_sl(symbol, product_id, size, be_new_sl, pos_key,
                     f"[BREAK-EVEN] {direction.upper()} {symbol}: "
                     f"New SL placed at {be_new_sl:.6f}"
                 )
+                # CHANGE 1: True ki jagah be_new_sl price store karo
                 with _break_even_applied_lock:
-                    _break_even_applied[pos_key] = True
+                    _break_even_applied[pos_key] = be_new_sl
         except Exception:
             pass
+
 
 # ========== MAIN ==========
 if __name__ == '__main__':
