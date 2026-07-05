@@ -949,11 +949,11 @@ input[type="checkbox"]{width:14px;height:14px;accent-color:var(--cyan);cursor:po
           <tr>
             <th><input type="checkbox" id="selectAllTrades" onchange="toggleAllTrades()"></th>
             <th>Entry</th><th>Exit</th><th>Pair</th>
-            <th>Side</th><th>Size</th><th>Entry $</th><th>Exit $</th><th>P&amp;L</th>
+            <th>Side</th><th>Size</th><th>Entry $</th><th>Exit $</th><th>P&amp;L</th><th>Entry Order</th><th>Exit Order</th><th>Decisions</th>
           </tr>
         </thead>
         <tbody id="tradeBody">
-          <tr><td colspan="9"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">Awaiting Execution</div></div></td></tr>
+          <tr><td colspan="12"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">Awaiting Execution</div></div></td></tr>
         </tbody>
       </table>
     </div>
@@ -962,6 +962,35 @@ input[type="checkbox"]{width:14px;height:14px;accent-color:var(--cyan);cursor:po
       <div class="pagi-btns">
         <button class="pagi-btn" id="prevBtn" onclick="loadPreviousTrades()" disabled>← Prev</button>
         <button class="pagi-btn" id="nextBtn" onclick="loadNextTrades()" disabled>Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SIGNAL SCORES HISTORY (separate list — NOT trade history, INFO ONLY) -->
+  <div class="card">
+    <div class="card-head">
+      <span class="card-head-title">Signal Scores History (Info Only)</span>
+      <span id="ssHistInfo" style="font-family:var(--font-mono);font-size:9px;color:var(--muted)">—</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Time</th><th>Order ID</th><th>Position</th><th>Lot</th>
+            <th>1M</th><th>5M</th><th>15M (Entry)</th><th>30M</th>
+            <th>1H (Conf.)</th><th>2H</th><th>4H (Master)</th><th>1D</th><th>1W</th><th>Final</th>
+          </tr>
+        </thead>
+        <tbody id="signalScoresBody">
+          <tr><td colspan="15"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">No signal snapshots yet</div></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagi">
+      <div class="pagi-info" id="ssPagiInfo">0 rows</div>
+      <div class="pagi-btns">
+        <button class="pagi-btn" id="ssPrevBtn" onclick="loadPreviousSignalScores()" disabled>← Prev</button>
+        <button class="pagi-btn" id="ssNextBtn" onclick="loadNextSignalScores()" disabled>Next →</button>
       </div>
     </div>
   </div>
@@ -1301,11 +1330,11 @@ function renderModalTrades(){
     $('modalBody').innerHTML='<div class="modal-loading">No trades found for this filter</div>';return;
   }
 
-  let html=`<table style="min-width:600px">
+  let html=`<table style="min-width:700px">
     <thead>
       <tr>
         <th>#</th><th>Entry Time</th><th>Exit Time</th><th>Pair</th>
-        <th>Side</th><th>Size</th><th>Entry $</th><th>Exit $</th><th>P&L</th><th>Result</th>
+        <th>Side</th><th>Size</th><th>Entry $</th><th>Exit $</th><th>P&L</th><th>Entry Order</th><th>Exit Order</th><th>Decisions</th><th>Result</th>
       </tr>
     </thead><tbody>`;
 
@@ -1334,6 +1363,9 @@ function renderModalTrades(){
       <td style="font-size:10px;color:var(--text2)">${t.entry_price||'—'}</td>
       <td style="font-size:10px;color:var(--text2)">${t.exit_price||'—'}</td>
       <td class="${pnlClass}">${pnlStr}</td>
+      <td style="font-size:9px;color:var(--muted)">${t.entry_order_id||'—'}</td>
+      <td style="font-size:9px;color:var(--muted)">${t.exit_order_id||'—'}</td>
+      <td style="font-size:9px;color:var(--muted);white-space:nowrap" title="${t.trade_decisions||''}">${t.trade_decisions||'—'}</td>
       <td>${resultBadge}</td>
     </tr>`;
   });
@@ -1355,9 +1387,10 @@ let updateInterval,isEngineRunning=false,allTrades=[],currentTradePage=1;
 let currentPagination=null,isManualPagination=false;
 const $=id=>document.getElementById(id);
 
-document.addEventListener('DOMContentLoaded',()=>{
+document.addEventListener('DOMContentLoaded',Items=>{
   fetchSystemIP();
   initializePnLChart();
+  loadSignalScoresPage(1);   // >>> ADDED
   // Build graph from DB first, then start normal polling
   buildGraphFromDB().then(()=>{
     fetch('/api/bot-status').then(r=>r.json()).then(()=>{
@@ -1543,7 +1576,7 @@ function setVal(id,val){
 
 function renderTrades(){
   if(!currentPagination){
-    $('tradeBody').innerHTML='<tr><td colspan="9"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">No trades</div></div></td></tr>';
+    $('tradeBody').innerHTML='<tr><td colspan="12"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">No trades</div></div></td></tr>';
     return;
   }
   const{current_page,per_page,total,has_next,has_prev}=currentPagination;
@@ -1551,12 +1584,12 @@ function renderTrades(){
   $('pagiInfo').textContent=`${start}–${end} of ${total}`;
   $('prevBtn').disabled=!has_prev;$('nextBtn').disabled=!has_next;
   if(!allTrades.length){
-    $('tradeBody').innerHTML='<tr><td colspan="9"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">No trades in range</div></div></td></tr>';
+    $('tradeBody').innerHTML='<tr><td colspan="12"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">No trades in range</div></div></td></tr>';
     return;
   }
   $('tradeBody').innerHTML=allTrades.map(t=>{
-    const ep=t.entry_time?new Date(t.entry_time).toLocaleTimeString():'';
-    const xp=t.exit_time?new Date(t.exit_time).toLocaleTimeString():'';
+    const ep=t.entry_time?new Date(t.entry_time).toLocaleString():'';
+    const xp=t.exit_time?new Date(t.exit_time).toLocaleString():'';
     const pnlVal=t.pnl!=null?parseFloat(t.pnl):null;
     const isProfit=pnlVal!=null&&pnlVal>0;
     const isLoss=pnlVal!=null&&pnlVal<=0;
@@ -1577,6 +1610,9 @@ function renderTrades(){
       <td style="font-size:10px">${t.entry_price}</td>
       <td style="font-size:10px">${t.exit_price}</td>
       <td class="${pnlCls}">${pnlStr}</td>
+      <td style="font-size:9px;color:var(--muted)">${t.entry_order_id||'—'}</td>
+      <td style="font-size:9px;color:var(--muted)">${t.exit_order_id||'—'}</td>
+      <td style="font-size:9px;color:var(--muted);white-space:nowrap" title="${t.trade_decisions||''}">${t.trade_decisions||'—'}</td>
     </tr>`;
   }).join('');
 }
@@ -1695,6 +1731,93 @@ async function deleteSelectedTrades(){
     }else alert('Failed: '+d.message);
   }catch(e){alert('Error: '+e.message)}
 }
+
+// ═══════════════════════════════════════════════════
+// SIGNAL SCORES HISTORY (separate, info-only table)
+// ═══════════════════════════════════════════════════
+let ssCurrentPage = 1;
+let ssPagination  = null;
+let ssManualPage  = false;
+
+function bColor(text){
+  if(!text) return 'var(--muted)';
+  if(text.startsWith('BUY')) return 'var(--cyan2)';
+  if(text.startsWith('SELL')) return 'var(--red)';
+  return 'var(--muted)';
+}
+
+async function loadSignalScoresPage(page){
+  try{
+    const r = await fetch(`/api/signal-scores-history?page=${page}&per_page=10`);
+    const d = await r.json();
+    if(d.success){
+      ssPagination = d.pagination;
+      ssCurrentPage = page;
+      renderSignalScores(d.scores);
+    }
+  }catch(e){console.error('Signal scores load error', e)}
+}
+
+function renderSignalScores(rows){
+  if(!ssPagination){return}
+  const {current_page, per_page, total, has_next, has_prev} = ssPagination;
+  const start = total===0?0:(current_page-1)*per_page+1;
+  const end   = Math.min(current_page*per_page, total);
+  $('ssPagiInfo').textContent = `${start}–${end} of ${total}`;
+  $('ssPrevBtn').disabled = !has_prev;
+  $('ssNextBtn').disabled = !has_next;
+  $('ssHistInfo').textContent = `${total} snapshots saved`;
+
+  if(!rows.length){
+    $('signalScoresBody').innerHTML = '<tr><td colspan="15"><div class="empty"><div class="empty-icon">◈</div><div class="empty-text">No signal snapshots yet</div></div></td></tr>';
+    return;
+  }
+
+  $('signalScoresBody').innerHTML = rows.map(row=>{
+    const dt = row.entry_time ? new Date(row.entry_time) : null;
+    const dateStr = dt ? dt.toLocaleDateString('en-GB').replace(/\//g,'-') : '—';
+    const timeStr = dt ? dt.toLocaleTimeString() : '—';
+    const finalColor = row.final_decision==='BUY' ? 'var(--cyan2)' : row.final_decision==='SELL' ? 'var(--red)' : 'var(--muted)';
+    const posColor = row.position==='BUY' ? 'side-buy' : 'side-sell';
+    return `<tr>
+      <td style="font-size:10px">${dateStr}</td>
+      <td style="font-size:10px">${timeStr}</td>
+      <td style="font-size:9px;color:var(--muted)">${row.order_id}</td>
+      <td class="${posColor}">${row.position}</td>
+      <td>${row.lot_size}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_1m)}">${row.tf_1m||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_5m)}">${row.tf_5m||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_15m)}">${row.tf_15m||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_30m)}">${row.tf_30m||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_1h)}">${row.tf_1h||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_2h)}">${row.tf_2h||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_4h)}">${row.tf_4h||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_1d)}">${row.tf_1d||'—'}</td>
+      <td style="font-size:9px;color:${bColor(row.tf_1w)}">${row.tf_1w||'—'}</td>
+      <td style="font-weight:bold;color:${finalColor}">${row.final_decision} ✅</td>
+    </tr>`;
+  }).join('');
+}
+
+function loadPreviousSignalScores(){
+  if(ssPagination && ssPagination.has_prev){
+    ssManualPage = true;
+    loadSignalScoresPage(ssCurrentPage - 1);
+    setTimeout(()=>{ssManualPage=false}, 4000);
+  }
+}
+function loadNextSignalScores(){
+  if(ssPagination && ssPagination.has_next){
+    ssManualPage = true;
+    loadSignalScoresPage(ssCurrentPage + 1);
+    setTimeout(()=>{ssManualPage=false}, 4000);
+  }
+}
+
+// Auto-refresh page 1 every 5s, unless user is manually browsing pages
+setInterval(()=>{
+  if(!ssManualPage) loadSignalScoresPage(ssCurrentPage);
+}, 5000);
 </script>
 </body>
 </html>
