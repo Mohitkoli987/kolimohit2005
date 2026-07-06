@@ -138,11 +138,11 @@ MYSQL_POOL = PooledDB(
     maxusage=None,          # recycle connection indefinitely (no forced close after N uses)
     setsession=[],
     ping=1,                 # ping connection before use; reconnect if stale (fixes "Lost connection")
-    host=os.getenv('MYSQL_HOST', 'brh5fbyrzvuo6h4krbza-mysql.services.clever-cloud.com'),
+    host=os.getenv('MYSQL_HOST', 'bzo0nquc4dvvfue9drkr-mysql.services.clever-cloud.com'),
     port=int(os.getenv('MYSQL_PORT', 3306)),
-    user=os.getenv('MYSQL_USER', 'u5xpubw7bw7zeeli'),
-    password=os.getenv('MYSQL_PASSWORD', 'uwFmhjqiZfKfp0s0UofY'),
-    database=os.getenv('MYSQL_DB', 'brh5fbyrzvuo6h4krbza'),
+    user=os.getenv('MYSQL_USER', 'ukuhjen60ha0ng5x'),
+    password=os.getenv('MYSQL_PASSWORD', 'hEV8uofQX6ZZNMrD95Dt'),
+    database=os.getenv('MYSQL_DB', 'bzo0nquc4dvvfue9drkr'),
     charset='utf8mb4',
     cursorclass=pymysql.cursors.DictCursor,
     autocommit=False,
@@ -229,7 +229,7 @@ def cleanup_old_trades(target_size_mb=8.5):
 BASE_URL = "https://cdn-ind.testnet.deltaex.org"
 WS_URL ="wss://testnet-socket.india.delta.exchange"
 
-fees=2
+fees=3.5
 
 
 DELTA_API_KEY = os.getenv("DELTA_API_KEY")
@@ -246,8 +246,8 @@ LOT_STEPS = {
     2: 2,
     3: 4,
     4: 8,
-    5: 16,
-    6: 32,
+    # 5: 16,
+    # 6: 32,
 }
 
 # Bot State
@@ -257,9 +257,9 @@ BOT_STATE = {
     'current_step': 1,
     'current_lot': 1,
     'base_lot': 1,
-    'leverage': 100,
-    'tp_percent': 0.5,
-    'sl_percent': 0.22,
+    'leverage': 50,
+    'tp_percent': 4,
+    'sl_percent': 2,
     'max_steps': max(LOT_STEPS.keys()),
     'last_result': None,
     'symbol': 'ETHUSD',
@@ -4213,17 +4213,17 @@ _break_even_applied      = {}
 _break_even_applied_lock = Lock()
 
 # ========== TP/SL GUARDIAN CONFIG ==========
-LIVE_TP_PERCENTAGE        = 1
-LIVE_SL_PERCENTAGE        = 1
+LIVE_TP_PERCENTAGE        = 4
+LIVE_SL_PERCENTAGE        = 2
 LIQUIDATION_PROTECTION    = "Y"
 # LIQUIDATION_BUFFER        = 0.15
 LIQUIDATION_BUFFER        = 0.1
 
 # ========== BREAK-EVEN CONFIG ==========
 BREAK_EVEN_ENABLED         = True
-BREAK_EVEN_TRIGGER_PERCENT = 0.2    # TP ka kitna % travel hone pe BE activate ho
+BREAK_EVEN_TRIGGER_PERCENT = 0.5    # TP ka kitna % travel hone pe BE activate ho
 BREAK_EVEN_TRIGGER_BUFFER  = 0.4    # Half-TP se itna pehle trigger ho (USD)
-BREAK_EVEN_PROFIT_OFFSET   = 2      # Entry ke upar SL kitna rakho (USD)
+BREAK_EVEN_PROFIT_OFFSET   = 3      # Entry ke upar SL kitna rakho (USD)
 
 # ========== BREAK-EVEN STATE TRACKER ==========
 # key = product_id, value = be_new_sl price (float) or None
